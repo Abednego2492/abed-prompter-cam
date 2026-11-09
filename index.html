@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#05070B">
+<title>Abed Prompter Cam</title>
+<style>
+  :root { --lime: #C6FF00; --ink: #05070B; --mut: #8A93A3; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Inter", system-ui, sans-serif; overflow: hidden; }
+  #stage { position: fixed; inset: 0; background: #000; }
+  video#cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); background: #000; }
+  video#cam.back { transform: none; }
+  /* teleprompter band near the lens (top) */
+  #band { position: absolute; left: 0; right: 0; top: 0; height: 44%; background: linear-gradient(to bottom, rgba(0,0,0,.92) 0%, rgba(0,0,0,.88) 75%, rgba(0,0,0,0) 100%); padding-top: env(safe-area-inset-top); overflow: hidden; }
+  #band.mirror #scroller { transform: scaleX(-1); }
+  #scroller { position: absolute; left: 0; right: 0; top: 0; height: 100%; overflow: hidden; }
+  #text { position: absolute; left: 0; right: 0; top: 0; padding: 14vh 5vw 30vh; font-size: 30px; line-height: 1.3; font-weight: 700; letter-spacing: -0.01em; color: #c9ced6; text-shadow: 0 2px 8px rgba(0,0,0,.8); will-change: transform; }
+  #text p { margin: 0 0 .7em; } #text p.cur { color: #fff; }
+  #text p b { display: block; color: var(--lime); font: 600 .45em ui-monospace, Menlo, monospace; letter-spacing: .12em; margin-bottom: .25em; }
+  #guide { position: absolute; left: 5vw; right: 5vw; top: 14vh; height: 2px; background: rgba(198,255,0,.6); pointer-events: none; }
+  #hud { position: absolute; left: 0; right: 0; top: calc(env(safe-area-inset-top) + 8px); display: flex; justify-content: space-between; align-items: center; padding: 0 14px; font: 600 11px ui-monospace, Menlo, monospace; letter-spacing: .12em; color: var(--lime); text-transform: uppercase; pointer-events: none; }
+  #hud .rec { display: none; align-items: center; gap: 6px; color: #FF3B30; } #hud .rec.on { display: flex; }
+  #hud .rec i { width: 9px; height: 9px; border-radius: 50%; background: #FF3B30; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  /* bottom controls */
+  #ctl { position: absolute; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(env(safe-area-inset-bottom) + 18px); background: linear-gradient(to top, rgba(0,0,0,.85), rgba(0,0,0,0)); }
+  .row { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 10px; }
+  .pill { background: rgba(17,21,29,.85); color: #fff; border: 1px solid #1C2230; border-radius: 999px; padding: 8px 12px; font-size: 13px; font-weight: 600; cursor: pointer; backdrop-filter: blur(8px); }
+  .pill.lime { background: var(--lime); color: var(--ink); border-color: var(--lime); }
+  .pill.small { padding: 7px 10px; font-size: 12px; min-width: 40px; text-align: center; }
+  #recbtn { width: 78px; height: 78px; border-radius: 50%; border: 5px solid #fff; background: #FF3B30; cursor: pointer; display: grid; place-items: center; box-shadow: 0 0 0 6px rgba(255,255,255,.12), 0 0 30px rgba(255,59,48,.5); transition: transform .15s; }
+  #recbtn:active { transform: scale(.94); }
+  #recbtn.on { border-radius: 18px; width: 60px; height: 60px; margin: 9px; background: #FF3B30; }
+  #recbtn.wait { background: #333; box-shadow: none; }
+  #count { position: absolute; inset: 0; display: none; place-items: center; font-size: 180px; font-weight: 900; color: var(--lime); background: rgba(0,0,0,.55); text-shadow: 0 0 40px rgba(198,255,0,.6); } #count.on { display: grid; }
+  /* script sheet */
+  #sheet { position: absolute; inset: 0; background: var(--ink); display: none; flex-direction: column; padding: calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 16px); gap: 10px; overflow: auto; }
+  #sheet.on { display: flex; }
+  #sheet h2 { margin: 0; font: 400 1.5rem Georgia, "Times New Roman", serif; } #sheet h2 b { color: var(--lime); font-weight: 400; }
+  #sheet .note { color: var(--mut); font-size: 13px; margin: 0; }
+  #sheet textarea { width: 100%; min-height: 34vh; background: #0C0F15; color: #fff; border: 1px solid #1C2230; border-radius: 12px; padding: 12px; font-size: 15px; line-height: 1.45; resize: vertical; font-family: inherit; }
+  #sheet input { width: 100%; background: #0C0F15; color: #fff; border: 1px solid #1C2230; border-radius: 10px; padding: 10px 12px; font-size: 15px; }
+  #saved { display: flex; flex-wrap: wrap; gap: 8px; }
+  #saved .chip { background: #0C0F15; border: 1px solid #1C2230; border-radius: 999px; padding: 7px 12px; font-size: 13px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+  #saved .chip.active { border-color: var(--lime); color: var(--lime); }
+  #saved .chip span.x { color: var(--mut); }
+  /* result */
+  #result { position: absolute; inset: 0; background: #000; display: none; flex-direction: column; } #result.on { display: flex; }
+  #result video { flex: 1; width: 100%; object-fit: contain; background: #000; }
+  #result .row { padding: 10px 16px calc(env(safe-area-inset-bottom) + 18px); flex-wrap: wrap; }
+  #err { position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%); background: rgba(12,15,21,.95); border: 1px solid #FF3B30; border-radius: 14px; padding: 16px; font-size: 14px; line-height: 1.5; display: none; } #err.on { display: block; }
+  #err b { color: #FF3B30; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="cam" autoplay playsinline muted></video>
+  <div id="band"><div id="scroller"><div id="text"></div></div><div id="guide"></div></div>
+  <div id="hud"><span>● ABED PROMPTER CAM</span><span class="rec" id="recind"><i></i><span id="timer">00:00</span></span><span id="hudr">READY</span></div>
+  <div id="count">3</div>
+  <div id="ctl">
+    <div class="row">
+      <button class="pill small" id="slower">−</button><span id="spd" style="font:600 12px ui-monospace,Menlo,monospace;color:#8A93A3;min-width:34px;text-align:center">1.0x</span><button class="pill small" id="faster">+</button>
+      <button class="pill small" id="fsm">A−</button><button class="pill small" id="fsb">A+</button>
+      <button class="pill small" id="mir">Mirror</button>
+    </div>
+    <div class="row">
+      <button class="pill" id="openSheet">Naskah</button>
+      <button id="recbtn" class="wait" aria-label="Record"></button>
+      <button class="pill" id="flip">Kamera</button>
+    </div>
+  </div>
+  <div id="err"><b>Kamera gak bisa dibuka.</b><div id="errmsg"></div></div>
+</div>
+
+<div id="sheet">
+  <h2>NASKAH <b>HARI INI</b></h2>
+  <p class="note">Tempel naskah dari dashboard (tombol "Salin naskah"), atau tulis sendiri. Pisahin paragraf dengan baris kosong. Tersimpan di HP ini.</p>
+  <input id="sname" placeholder="judul singkat, misal: widget" />
+  <textarea id="stext" placeholder="Tempel naskah di sini…"></textarea>
+  <div class="row" style="justify-content:flex-start">
+    <button class="pill lime" id="useBtn">Pakai & tutup</button>
+    <button class="pill" id="pasteBtn">Tempel dari clipboard</button>
+    <button class="pill" id="saveBtn">Simpan</button>
+  </div>
+  <p class="note">Tersimpan:</p>
+  <div id="saved"></div>
+  <div class="row" style="justify-content:flex-start"><button class="pill" id="closeSheet">Tutup</button></div>
+</div>
+
+<div id="result">
+  <video id="out" controls playsinline></video>
+  <div class="row">
+    <button class="pill lime" id="shareBtn">Simpan ke Foto</button>
+    <a class="pill" id="dlBtn" download="take.mp4">Download</a>
+    <button class="pill" id="againBtn">Rekam lagi</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const cam = $('cam'), text = $('text'), band = $('band'), scroller = $('scroller'), recbtn = $('recbtn'), count = $('count'), timer = $('timer'), recind = $('recind'), hudr = $('hudr');
+  let stream = null, rec = null, chunks = [], facing = 'user', recording = false, t0 = 0, tick = null;
+  let playing = false, y = 0, speed = 1.0, fs = 30, raf = null, last = 0;
+  const LS = 'abedPrompter.v1';
+  const store = JSON.parse(localStorage.getItem(LS) || '{"scripts":[],"current":null,"speed":1,"fs":30}');
+  speed = store.speed || 1; fs = store.fs || 30;
+  const save = () => localStorage.setItem(LS, JSON.stringify({ scripts: store.scripts, current: store.current, speed, fs }));
+
+  // ---- camera ----
+  async function startCam() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    $('err').classList.remove('on');
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+        audio: { echoCancellation: true, noiseSuppression: true }
+      });
+      cam.srcObject = stream; cam.classList.toggle('back', facing === 'environment');
+      await cam.play().catch(() => {});
+      recbtn.classList.remove('wait'); hudr.textContent = facing === 'user' ? 'FRONT · READY' : 'BACK · READY';
+    } catch (e) {
+      $('errmsg').textContent = (e && e.message ? e.message : String(e)) + '. Buka halaman ini di Safari lewat HTTPS, izinkan kamera dan mikrofon (Settings → Safari → Camera: Allow).';
+      $('err').classList.add('on'); recbtn.classList.add('wait');
+    }
+  }
+  $('flip').addEventListener('click', () => { if (recording) return; facing = facing === 'user' ? 'environment' : 'user'; startCam(); });
+
+  function pickMime() {
+    const c = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=h264,aac', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+    for (const m of c) if (window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+    return '';
+  }
+  function fmt(s) { return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(Math.floor(s % 60)).padStart(2, '0'); }
+
+  function startRec() {
+    if (!stream) return;
+    chunks = [];
+    const mime = pickMime();
+    try { rec = mime ? new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12000000 }) : new MediaRecorder(stream); }
+    catch (e) { rec = new MediaRecorder(stream); }
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = showResult;
+    rec.start(1000);
+    recording = true; t0 = Date.now(); recbtn.classList.add('on'); recind.classList.add('on'); hudr.textContent = 'REC';
+    tick = setInterval(() => { timer.textContent = fmt((Date.now() - t0) / 1000); }, 250);
+    resetScroll(); play();
+  }
+  function stopRec() {
+    if (!recording) return;
+    recording = false; pause(); clearInterval(tick);
+    recbtn.classList.remove('on'); recind.classList.remove('on'); hudr.textContent = 'SAVED?';
+    try { rec.stop(); } catch (e) { showResult(); }
+  }
+  function showResult() {
+    const type = (rec && rec.mimeType) || (chunks[0] && chunks[0].type) || 'video/mp4';
+    const blob = new Blob(chunks, { type });
+    const ext = type.includes('webm') ? 'webm' : 'mp4';
+    const name = 'take-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + ext;
+    const url = URL.createObjectURL(blob);
+    $('out').src = url; $('dlBtn').href = url; $('dlBtn').download = name;
+    $('result').classList.add('on');
+    $('shareBtn').onclick = async () => {
+      const file = new File([blob], name, { type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); } catch (e) {} }
+      else { alert('Share file gak didukung di browser ini. Pakai tombol Download, lalu simpan dari Files ke Foto.'); }
+    };
+  }
+  $('againBtn').addEventListener('click', () => { $('result').classList.remove('on'); hudr.textContent = 'READY'; timer.textContent = '00:00'; });
+
+  function countdown(cb) { let n = 3; count.textContent = n; count.classList.add('on'); const t = setInterval(() => { n--; if (n <= 0) { clearInterval(t); count.classList.remove('on'); cb(); } else count.textContent = n; }, 800); }
+  recbtn.addEventListener('click', () => { if (recbtn.classList.contains('wait')) { startCam(); return; } if (recording) stopRec(); else countdown(startRec); });
+
+  // ---- teleprompter ----
+  function setSpeed(v) { speed = Math.max(0.3, Math.min(3, Math.round(v * 10) / 10)); $('spd').textContent = speed.toFixed(1) + 'x'; save(); }
+  function setFs(v) { fs = Math.max(18, Math.min(60, v)); text.style.fontSize = fs + 'px'; save(); }
+  function resetScroll() { y = 0; text.style.transform = 'translateY(0)'; text.querySelectorAll('p').forEach(p => p.classList.remove('cur')); }
+  function step(ts) {
+    if (!playing) return;
+    const dt = last ? (ts - last) / 1000 : 0; last = ts;
+    y += dt * 30 * speed * (fs / 30);
+    const max = text.offsetHeight - scroller.clientHeight * 0.3;
+    if (y >= max) { y = max; playing = false; }
+    text.style.transform = `translateY(${-y}px)`;
+    const line = scroller.clientHeight * 0.14 / 0.44 * 0.44; // guide at 14vh of band
+    const gl = window.innerHeight * 0.14;
+    text.querySelectorAll('p').forEach(p => { const top = p.offsetTop - y; p.classList.toggle('cur', top <= gl + 8 && top + p.offsetHeight > gl - 8); });
+    if (playing) raf = requestAnimationFrame(step);
+  }
+  function play() { playing = true; last = 0; raf = requestAnimationFrame(step); }
+  function pause() { playing = false; if (raf) cancelAnimationFrame(raf); }
+  scroller.addEventListener('click', () => { if (!text.textContent.trim()) { openSheet(); return; } if (playing) pause(); else play(); });
+  $('slower').addEventListener('click', () => setSpeed(speed - 0.1));
+  $('faster').addEventListener('click', () => setSpeed(speed + 0.1));
+  $('fsm').addEventListener('click', () => setFs(fs - 3));
+  $('fsb').addEventListener('click', () => setFs(fs + 3));
+  $('mir').addEventListener('click', () => band.classList.toggle('mirror'));
+
+  function render(scriptText) {
+    text.textContent = '';
+    const parts = (scriptText || '').split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    if (!parts.length) { const p = document.createElement('p'); p.textContent = 'Tap di sini buat masukin naskah.'; text.appendChild(p); return; }
+    parts.forEach((s, i) => {
+      const p = document.createElement('p');
+      const m = s.match(/^(\d+\s*[-–]\s*\d+)\s*[:\s]\s*([\s\S]*)$/);
+      if (m) { const b = document.createElement('b'); b.textContent = m[1] + ' dtk'; p.appendChild(b); p.appendChild(document.createTextNode(m[2])); }
+      else { const b = document.createElement('b'); b.textContent = String(i + 1).padStart(2, '0'); p.appendChild(b); p.appendChild(document.createTextNode(s)); }
+      text.appendChild(p);
+    });
+    resetScroll();
+  }
+
+  // ---- sheet ----
+  const sheet = $('sheet');
+  function openSheet() { sheet.classList.add('on'); drawSaved(); const cur = store.scripts.find(s => s.id === store.current); if (cur) { $('sname').value = cur.name; $('stext').value = cur.text; } }
+  function closeSheet() { sheet.classList.remove('on'); }
+  function drawSaved() {
+    const box = $('saved'); box.textContent = '';
+    for (const s of store.scripts) {
+      const c = document.createElement('div'); c.className = 'chip' + (s.id === store.current ? ' active' : '');
+      const n = document.createElement('span'); n.textContent = s.name || 'tanpa judul'; c.appendChild(n);
+      const x = document.createElement('span'); x.className = 'x'; x.textContent = '✕'; x.addEventListener('click', (e) => { e.stopPropagation(); store.scripts = store.scripts.filter(z => z.id !== s.id); if (store.current === s.id) store.current = null; save(); drawSaved(); });
+      c.appendChild(x);
+      c.addEventListener('click', () => { store.current = s.id; save(); $('sname').value = s.name; $('stext').value = s.text; render(s.text); drawSaved(); });
+      box.appendChild(c);
+    }
+    if (!store.scripts.length) { const p = document.createElement('p'); p.className = 'note'; p.textContent = 'Belum ada.'; box.appendChild(p); }
+  }
+  function saveScript() {
+    const name = $('sname').value.trim() || ('naskah ' + (store.scripts.length + 1)); const txt = $('stext').value;
+    if (!txt.trim()) return null;
+    let s = store.scripts.find(z => z.id === store.current && z.name === name);
+    if (!s) { s = { id: Date.now().toString(36), name, text: txt }; store.scripts.unshift(s); store.scripts = store.scripts.slice(0, 20); }
+    else s.text = txt;
+    store.current = s.id; save(); drawSaved(); return s;
+  }
+  $('openSheet').addEventListener('click', openSheet);
+  $('closeSheet').addEventListener('click', closeSheet);
+  $('saveBtn').addEventListener('click', () => { saveScript(); });
+  $('useBtn').addEventListener('click', () => { const s = saveScript(); render(s ? s.text : $('stext').value); closeSheet(); });
+  $('pasteBtn').addEventListener('click', async () => { try { const t = await navigator.clipboard.readText(); if (t) $('stext').value = t; } catch (e) { alert('Clipboard gak bisa dibaca otomatis. Tahan di kotak naskah, lalu Paste.'); } });
+
+  // ---- init ----
+  setSpeed(speed); setFs(fs);
+  const cur = store.scripts.find(s => s.id === store.current);
+  render(cur ? cur.text : '');
+  startCam();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !recording) startCam(); });
+})();
+</script>
+</body>
+</html>
