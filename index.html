@@ -250,10 +250,28 @@
   $('useBtn').addEventListener('click', () => { const s = saveScript(); render(s ? s.text : $('stext').value); closeSheet(); });
   $('pasteBtn').addEventListener('click', async () => { try { const t = await navigator.clipboard.readText(); if (t) $('stext').value = t; } catch (e) { alert('Clipboard gak bisa dibaca otomatis. Tahan di kotak naskah, lalu Paste.'); } });
 
+  // ---- naskah dari link (#n=judul&s=base64url) ----
+  function b64d(v) { v = v.replace(/-/g, '+').replace(/_/g, '/'); while (v.length % 4) v += '='; const b = atob(v); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new TextDecoder().decode(u); }
+  function importFromHash() {
+    if (!location.hash || location.hash.indexOf('s=') < 0) return false;
+    try {
+      const q = new URLSearchParams(location.hash.slice(1));
+      const txt = b64d(q.get('s') || ''); if (!txt.trim()) return false;
+      const name = (q.get('n') || 'naskah dari link').slice(0, 60);
+      let sc = store.scripts.find(z => z.name === name);
+      if (sc) sc.text = txt; else { sc = { id: Date.now().toString(36), name, text: txt }; store.scripts.unshift(sc); store.scripts = store.scripts.slice(0, 20); }
+      store.current = sc.id; save(); render(txt); resetScroll && resetScroll();
+      history.replaceState(null, '', location.pathname + location.search);
+      const prev = hudr.textContent; hudr.textContent = 'NASKAH MASUK ✓'; setTimeout(() => { if (!recording) hudr.textContent = prev; }, 2500);
+      return true;
+    } catch (e) { return false; }
+  }
+  window.addEventListener('hashchange', importFromHash);
+
   // ---- init ----
   setSpeed(speed); setFs(fs);
   const cur = store.scripts.find(s => s.id === store.current);
-  render(cur ? cur.text : '');
+  if (!importFromHash()) render(cur ? cur.text : '');
   startCam();
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !recording) startCam(); });
 })();
