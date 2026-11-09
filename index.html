@@ -58,6 +58,13 @@
   #by b { color: var(--lime); font-weight: 600; }
   #by:active { background: rgba(198,255,0,.12); }
   body.recording #by { visibility: hidden; }
+  #drv { width: 100%; padding: 0 16px; font: 600 12px ui-monospace, Menlo, monospace; letter-spacing: .06em; color: var(--mut); text-align: center; min-height: 16px; }
+  #drv.ok { color: var(--lime); } #drv.bad { color: #FF6B60; }
+  #drvbar { height: 3px; background: #1C2230; margin: 6px 16px 0; border-radius: 3px; overflow: hidden; display: none; } #drvbar.on { display: block; }
+  #drvbar i { display: block; height: 100%; width: 0; background: var(--lime); transition: width .2s; }
+  .gd { display: none; } body.gdrive .gd { display: inline-block; }
+  #gdrow { display: none; gap: 8px; align-items: center; flex-wrap: wrap; } body.gdrive #gdrow { display: flex; }
+  #gdrow label { font-size: 13px; color: #fff; display: flex; gap: 6px; align-items: center; }
 </style>
 </head>
 <body>
@@ -92,6 +99,11 @@
     <button class="pill" id="pasteBtn">Tempel dari clipboard</button>
     <button class="pill" id="saveBtn">Simpan</button>
   </div>
+  <div id="gdrow">
+    <button class="pill" id="gdConnect">Hubungkan Google Drive</button>
+    <label><input type="checkbox" id="gdAuto"> Auto kirim habis rekam</label>
+  </div>
+  <p class="note gd" id="gdNote" style="display:none"></p>
   <p class="note">Tersimpan:</p>
   <div id="saved"></div>
   <div class="row" style="justify-content:flex-start"><button class="pill" id="closeSheet">Tutup</button></div>
@@ -99,7 +111,10 @@
 
 <div id="result">
   <video id="out" controls playsinline></video>
+  <div id="drvbar"><i></i></div>
+  <div id="drv"></div>
   <div class="row">
+    <button class="pill lime gd" id="gdBtn">Kirim ke Drive</button>
     <button class="pill lime" id="shareBtn">Simpan ke Foto</button>
     <a class="pill" id="dlBtn" download="take.mp4">Download</a>
     <button class="pill" id="againBtn">Rekam lagi</button>
@@ -166,10 +181,17 @@
     const type = (rec && rec.mimeType) || (chunks[0] && chunks[0].type) || 'video/mp4';
     const blob = new Blob(chunks, { type });
     const ext = type.includes('webm') ? 'webm' : 'mp4';
-    const name = 'take-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.' + ext;
+    const d = new Date(), z = (n) => String(n).padStart(2, '0');
+    const cs = store.scripts.find(q => q.id === store.current);
+    const slug = cs ? cs.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) : '';
+    const name = 'take-' + (slug ? slug + '-' : '') + d.getFullYear() + z(d.getMonth() + 1) + z(d.getDate()) + '-' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds()) + '.' + ext;
     const url = URL.createObjectURL(blob);
     $('out').src = url; $('dlBtn').href = url; $('dlBtn').download = name;
     $('result').classList.add('on');
+    const curS = store.scripts.find(z => z.id === store.current);
+    lastTake = { blob, type, name, scriptName: curS ? curS.name : '', scriptText: curS ? curS.text : '', sent: false };
+    if (typeof dmsg === 'function') dmsg('');
+    if (GCLIENT && gst.auto) sendTake(lastTake, false);
     $('shareBtn').onclick = async () => {
       const file = new File([blob], name, { type });
       if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); } catch (e) {} }
@@ -249,6 +271,111 @@
   $('saveBtn').addEventListener('click', () => { saveScript(); });
   $('useBtn').addEventListener('click', () => { const s = saveScript(); render(s ? s.text : $('stext').value); closeSheet(); });
   $('pasteBtn').addEventListener('click', async () => { try { const t = await navigator.clipboard.readText(); if (t) $('stext').value = t; } catch (e) { alert('Clipboard gak bisa dibaca otomatis. Tahan di kotak naskah, lalu Paste.'); } });
+
+
+  // ---- Google Drive upload (scope drive.file: cuma file buatan app ini) ----
+  const GCLIENT = '';  // isi Client ID OAuth (Web) dari Google Cloud
+  const GSCOPE = 'https://www.googleapis.com/auth/drive.file';
+  const GFOLDER = 'Temu Prompter Cam';
+  const GLS = 'abedPrompter.gdrive';
+  const gst = JSON.parse(localStorage.getItem(GLS) || '{}');   // {token, exp, folderId, auto}
+  const gsave = () => localStorage.setItem(GLS, JSON.stringify(gst));
+  let tokenClient = null, pendingTok = null, lastTake = null;
+  const drv = $('drv'), drvbar = $('drvbar');
+  const dmsg = (t, cls) => { drv.textContent = t; drv.className = cls || ''; };
+  const tokOk = () => gst.token && gst.exp && Date.now() < gst.exp - 60000;
+  function loadGis() {
+    return new Promise((res, rej) => {
+      if (window.google && google.accounts && google.accounts.oauth2) return res();
+      const sc = document.createElement('script'); sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true;
+      sc.onload = () => res(); sc.onerror = () => rej(new Error('gagal muat Google Sign-In')); document.head.appendChild(sc);
+    });
+  }
+  function initTokenClient() {
+    if (tokenClient || !(window.google && google.accounts && google.accounts.oauth2)) return;
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GCLIENT, scope: GSCOPE,
+      callback: (r) => {
+        if (r && r.access_token) { gst.token = r.access_token; gst.exp = Date.now() + (Number(r.expires_in) || 3600) * 1000; gsave(); gdUi(); if (pendingTok) { const f = pendingTok; pendingTok = null; f.res(gst.token); } }
+        else if (pendingTok) { const f = pendingTok; pendingTok = null; f.rej(new Error((r && r.error) || 'login dibatalkan')); }
+      },
+      error_callback: (e) => { if (pendingTok) { const f = pendingTok; pendingTok = null; f.rej(new Error((e && e.type) || 'login gagal')); } }
+    });
+  }
+  // harus dipanggil langsung dari tap (popup Google)
+  function getToken() {
+    if (tokOk()) return Promise.resolve(gst.token);
+    if (!tokenClient) return Promise.reject(new Error('Google Sign-In belum siap, coba tap lagi'));
+    return new Promise((res, rej) => { pendingTok = { res, rej }; tokenClient.requestAccessToken({ prompt: gst.folderId ? '' : 'consent' }); });
+  }
+  async function gfetch(url, opt, tok) {
+    const r = await fetch(url, Object.assign({}, opt, { headers: Object.assign({ Authorization: 'Bearer ' + tok }, (opt && opt.headers) || {}) }));
+    if (r.status === 401) { gst.token = null; gsave(); throw new Error('sesi Google habis, tap Kirim ke Drive lagi'); }
+    if (!r.ok) throw new Error('Drive ' + r.status + ': ' + (await r.text()).slice(0, 140));
+    return r;
+  }
+  async function ensureFolder(tok) {
+    if (gst.folderId) {
+      try { const r = await gfetch('https://www.googleapis.com/drive/v3/files/' + gst.folderId + '?fields=id,trashed', {}, tok); const j = await r.json(); if (!j.trashed) return gst.folderId; } catch (e) { if (/habis/.test(e.message)) throw e; }
+    }
+    const q = encodeURIComponent("name='" + GFOLDER + "' and mimeType='application/vnd.google-apps.folder' and trashed=false");
+    const l = await (await gfetch('https://www.googleapis.com/drive/v3/files?q=' + q + '&fields=files(id)&spaces=drive', {}, tok)).json();
+    if (l.files && l.files.length) gst.folderId = l.files[0].id;
+    else {
+      const c = await (await gfetch('https://www.googleapis.com/drive/v3/files?fields=id', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: GFOLDER, mimeType: 'application/vnd.google-apps.folder' }) }, tok)).json();
+      gst.folderId = c.id;
+    }
+    gsave(); return gst.folderId;
+  }
+  function putWithProgress(url, blob, type, onp) {
+    return new Promise((res, rej) => {
+      const x = new XMLHttpRequest(); x.open('PUT', url); x.setRequestHeader('Content-Type', type);
+      x.upload.onprogress = (e) => { if (e.lengthComputable) onp(e.loaded / e.total); };
+      x.onload = () => (x.status >= 200 && x.status < 300) ? res(JSON.parse(x.responseText || '{}')) : rej(new Error('upload ' + x.status));
+      x.onerror = () => rej(new Error('koneksi putus, coba lagi')); x.send(blob);
+    });
+  }
+  async function uploadTake(take, tok) {
+    const folder = await ensureFolder(tok);
+    drvbar.classList.add('on'); drvbar.firstElementChild.style.width = '0%';
+    dmsg('KIRIM KE DRIVE… 0%');
+    const meta = { name: take.name, parents: [folder], description: 'Naskah: ' + (take.scriptName || '-') };
+    const init = await gfetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name', { method: 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': take.type, 'X-Upload-Content-Length': String(take.blob.size) }, body: JSON.stringify(meta) }, tok);
+    const loc = init.headers.get('Location'); if (!loc) throw new Error('Drive gak ngasih alamat upload');
+    await putWithProgress(loc, take.blob, take.type, (f) => { drvbar.firstElementChild.style.width = Math.round(f * 100) + '%'; dmsg('KIRIM KE DRIVE… ' + Math.round(f * 100) + '%'); });
+    if (take.scriptText) {
+      const b = 'abedpc' + Date.now(), txtName = take.name.replace(/\.\w+$/, '') + '.naskah.txt';
+      const body = '--' + b + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify({ name: txtName, parents: [folder], mimeType: 'text/plain' }) + '\r\n--' + b + '\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n' + take.scriptText + '\r\n--' + b + '--';
+      try { await gfetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + b }, body }, tok); } catch (e) {}
+    }
+    take.sent = true; drvbar.classList.remove('on');
+    dmsg('✓ MASUK DRIVE: ' + GFOLDER + '/' + take.name, 'ok');
+  }
+  async function sendTake(take, fromTap) {
+    if (!take || take.sent || take.busy) return;
+    take.busy = true;
+    try {
+      const tok = fromTap ? await getToken() : (tokOk() ? gst.token : null);
+      if (!tok) { dmsg('Tap Kirim ke Drive buat login Google', ''); return; }
+      await uploadTake(take, tok);
+    } catch (e) { drvbar.classList.remove('on'); dmsg('Gagal: ' + e.message, 'bad'); }
+    finally { take.busy = false; }
+  }
+  function gdUi() {
+    const note = $('gdNote');
+    $('gdConnect').textContent = tokOk() || gst.folderId ? 'Drive tersambung ✓' : 'Hubungkan Google Drive';
+    $('gdAuto').checked = !!gst.auto;
+    note.style.display = 'block';
+    note.textContent = gst.folderId ? 'Video masuk ke folder "' + GFOLDER + '" di Google Drive lo. Aplikasi ini cuma bisa lihat file yang dia bikin sendiri.' : 'Sambungin Drive biar tiap take langsung masuk ke folder "' + GFOLDER + '". Aplikasi cuma bisa akses file yang dia bikin sendiri.';
+  }
+  if (GCLIENT) {
+    document.body.classList.add('gdrive');
+    loadGis().then(initTokenClient).catch(() => {});
+    gdUi();
+    $('gdConnect').addEventListener('click', async () => { try { const t = await getToken(); await ensureFolder(t); gdUi(); } catch (e) { $('gdNote').textContent = 'Gagal: ' + e.message; } });
+    $('gdAuto').addEventListener('change', (e) => { gst.auto = e.target.checked; gsave(); });
+    $('gdBtn').addEventListener('click', () => sendTake(lastTake, true));
+  }
 
   // ---- naskah dari link (#n=judul&s=base64url) ----
   function b64d(v) { v = v.replace(/-/g, '+').replace(/_/g, '/'); while (v.length % 4) v += '='; const b = atob(v); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new TextDecoder().decode(u); }
