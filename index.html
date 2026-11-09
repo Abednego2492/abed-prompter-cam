@@ -54,6 +54,10 @@
   #result .row { padding: 10px 16px calc(env(safe-area-inset-bottom) + 18px); flex-wrap: wrap; }
   #err { position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%); background: rgba(12,15,21,.95); border: 1px solid #FF3B30; border-radius: 14px; padding: 16px; font-size: 14px; line-height: 1.5; display: none; } #err.on { display: block; }
   #err b { color: #FF3B30; }
+  #by { display: block; margin: 12px auto 0; width: max-content; font: 600 11px ui-monospace, Menlo, monospace; letter-spacing: .1em; color: var(--mut); text-decoration: none; padding: 4px 10px; border-radius: 999px; }
+  #by b { color: var(--lime); font-weight: 600; }
+  #by:active { background: rgba(198,255,0,.12); }
+  body.recording #by { visibility: hidden; }
 </style>
 </head>
 <body>
@@ -73,13 +77,14 @@
       <button id="recbtn" class="wait" aria-label="Record"></button>
       <button class="pill" id="flip">Kamera</button>
     </div>
+    <a id="by" href="https://www.instagram.com/abednego0492/" target="_blank" rel="noopener">GRATIS · BY <b>@ABEDNEGO0492</b></a>
   </div>
   <div id="err"><b>Kamera gak bisa dibuka.</b><div id="errmsg"></div></div>
 </div>
 
 <div id="sheet">
   <h2>NASKAH <b>HARI INI</b></h2>
-  <p class="note">Tempel naskah dari dashboard (tombol "Salin naskah"), atau tulis sendiri. Pisahin paragraf dengan baris kosong. Tersimpan di HP ini.</p>
+  <p class="note">Tempel naskah lo atau tulis langsung di sini. Pisahin paragraf pakai baris kosong. Naskah cuma kesimpen di HP ini, gak dikirim ke mana-mana.</p>
   <input id="sname" placeholder="judul singkat, misal: widget" />
   <textarea id="stext" placeholder="Tempel naskah di sini…"></textarea>
   <div class="row" style="justify-content:flex-start">
@@ -147,14 +152,14 @@
     rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
     rec.onstop = showResult;
     rec.start(1000);
-    recording = true; t0 = Date.now(); recbtn.classList.add('on'); recind.classList.add('on'); hudr.textContent = 'REC';
+    recording = true; t0 = Date.now(); document.body.classList.add('recording'); recbtn.classList.add('on'); recind.classList.add('on'); hudr.textContent = 'REC';
     tick = setInterval(() => { timer.textContent = fmt((Date.now() - t0) / 1000); }, 250);
     resetScroll(); play();
   }
   function stopRec() {
     if (!recording) return;
     recording = false; pause(); clearInterval(tick);
-    recbtn.classList.remove('on'); recind.classList.remove('on'); hudr.textContent = 'SAVED?';
+    document.body.classList.remove('recording'); recbtn.classList.remove('on'); recind.classList.remove('on'); hudr.textContent = 'SAVED?';
     try { rec.stop(); } catch (e) { showResult(); }
   }
   function showResult() {
