@@ -1,0 +1,10 @@
+{
+  "name": "abed-prompter-cam",
+  "private": true,
+  "version": "1.1.0",
+  "description": "Kamera + teleprompter + ide harian (Netlify Functions + Blobs)",
+  "type": "module",
+  "dependencies": {
+    "@netlify/blobs": "^11.1.9"
+  }
+}

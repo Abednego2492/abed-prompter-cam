@@ -65,6 +65,28 @@
   .gd { display: none; } body.gdrive .gd { display: inline-block; }
   #gdrow { display: none; gap: 8px; align-items: center; flex-wrap: wrap; } body.gdrive #gdrow { display: flex; }
   #gdrow label { font-size: 13px; color: #fff; display: flex; gap: 6px; align-items: center; }
+  /* ide hari ini */
+  #today { position: absolute; inset: 0; background: var(--ink); display: none; flex-direction: column; padding: calc(env(safe-area-inset-top) + 14px) 16px calc(env(safe-area-inset-bottom) + 16px); gap: 12px; overflow: auto; -webkit-overflow-scrolling: touch; }
+  #today.on { display: flex; }
+  #today h2 { margin: 0; font: 400 1.5rem Georgia, "Times New Roman", serif; } #today h2 b { color: var(--lime); font-weight: 400; }
+  #today .note { color: var(--mut); font-size: 13px; margin: 0; }
+  #tmeta { font: 600 11px ui-monospace, Menlo, monospace; letter-spacing: .1em; color: var(--mut); text-transform: uppercase; }
+  .card { background: #0C0F15; border: 1px solid #1C2230; border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+  .card.st-cocok { border-color: rgba(198,255,0,.5); } .card.st-direkam { border-color: var(--lime); } .card.st-tolak { border-color: #FF3B30; opacity: .75; }
+  .card .top { display: flex; justify-content: space-between; gap: 8px; align-items: center; font: 600 11px ui-monospace, Menlo, monospace; letter-spacing: .1em; color: var(--lime); text-transform: uppercase; }
+  .card .top .st { color: #fff; background: #1C2230; border-radius: 999px; padding: 3px 8px; } .st-cocok .top .st, .st-direkam .top .st { background: var(--lime); color: var(--ink); } .st-tolak .top .st { background: #FF3B30; }
+  .card h3 { margin: 0; font: 400 1.15rem Georgia, "Times New Roman", serif; line-height: 1.3; }
+  .card .hook { font-size: 14px; color: #c9ced6; line-height: 1.45; } .card .hook b { color: var(--lime); font-weight: 600; }
+  .card details { font-size: 13px; color: var(--mut); line-height: 1.5; } .card summary { cursor: pointer; color: #fff; font-weight: 600; font-size: 13px; }
+  .card details p { margin: 6px 0; } .card details p b { color: #fff; }
+  .card .acts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill.red { border-color: #FF3B30; color: #FF6B60; }
+  .reasons { display: none; flex-wrap: wrap; gap: 6px; } .reasons.on { display: flex; }
+  .reasons .chip { background: #11151D; border: 1px solid #1C2230; border-radius: 999px; padding: 6px 10px; font-size: 12px; cursor: pointer; } .reasons .chip.sel { border-color: #FF3B30; color: #FF6B60; }
+  .reasons input { flex: 1 1 100%; background: #05070B; color: #fff; border: 1px solid #1C2230; border-radius: 10px; padding: 9px 12px; font-size: 14px; }
+  .fbnote { font-size: 12px; color: var(--mut); } .fbnote.ok { color: var(--lime); } .fbnote.bad { color: #FF6B60; }
+  #tsync { display: flex; gap: 8px; align-items: center; } #tsync input { flex: 1; background: #0C0F15; color: #fff; border: 1px solid #1C2230; border-radius: 10px; padding: 9px 12px; font-size: 14px; }
+  #todayBtn { position: relative; } #todayBtn i { position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border-radius: 50%; background: var(--lime); display: none; } #todayBtn.new i { display: block; }
 </style>
 </head>
 <body>
@@ -81,6 +103,7 @@
     </div>
     <div class="row">
       <button class="pill" id="openSheet">Naskah</button>
+      <button class="pill" id="todayBtn">Hari ini<i></i></button>
       <button id="recbtn" class="wait" aria-label="Record"></button>
       <button class="pill" id="flip">Kamera</button>
     </div>
@@ -107,6 +130,15 @@
   <p class="note">Tersimpan:</p>
   <div id="saved"></div>
   <div class="row" style="justify-content:flex-start"><button class="pill" id="closeSheet">Tutup</button></div>
+</div>
+
+<div id="today">
+  <h2>IDE <b>HARI INI</b></h2>
+  <div id="tmeta">memuat…</div>
+  <div id="tlist"></div>
+  <p class="note">Tap <b>Rekam</b>: naskah langsung masuk teleprompter. <b>Cocok</b> / <b>Riset ulang</b> dikirim ke Claude: ide yang ditolak diganti maksimal 1 jam kemudian (07–22 WIB), alasannya dipakai buat ide berikutnya.</p>
+  <div id="tsync"><input id="tkey" type="password" placeholder="kode sinkron (sekali isi)" autocomplete="off"><button class="pill" id="tkeySave">Simpan</button></div>
+  <div class="row" style="justify-content:flex-start"><button class="pill" id="tRefresh">Muat ulang</button><button class="pill" id="closeToday">Tutup</button></div>
 </div>
 
 <div id="result">
@@ -192,6 +224,7 @@
     lastTake = { blob, type, name, scriptName: curS ? curS.name : '', scriptText: curS ? curS.text : '', sent: false };
     if (typeof dmsg === 'function') dmsg('');
     if (GCLIENT && gst.auto) sendTake(lastTake, false);
+    try { tMarkRecorded(); } catch (e) {}
     $('shareBtn').onclick = async () => {
       const file = new File([blob], name, { type });
       if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); } catch (e) {} }
@@ -377,10 +410,123 @@
     $('gdBtn').addEventListener('click', () => sendTake(lastTake, true));
   }
 
+  // ---- ide hari ini (dari /api/ideas, diisi Claude tiap pagi) ----
+  const TLS = 'abedPrompter.today';
+  const tst = JSON.parse(localStorage.getItem(TLS) || '{}');   // {key, seen, local:{id:{status,reason,note}}}
+  tst.local = tst.local || {};
+  const tsave = () => localStorage.setItem(TLS, JSON.stringify(tst));
+  const today = $('today'), tlist = $('tlist'), tmeta = $('tmeta');
+  let tdata = null, tOpenedId = null, tqueue = null;
+  const qpos = (id) => { const it = tqueue && tqueue.items && tqueue.items.find(z => z.id === id); return it ? it.pos : 0; };
+  const REASONS = ['udah basi', 'terlalu teknis', 'bukan gue banget', 'ganti angle', 'kurang angka', 'udah pernah'];
+  const STL = { baru: 'BARU', cocok: 'COCOK', direkam: 'DIREKAM', tolak: 'RISET ULANG' };
+  const scriptOf = (r) => (r.script || []).map(b => (b.l || '').trim()).filter(Boolean).join('\n\n');
+  const fbOf = (id) => Object.assign({}, (tdata && tdata.feedback && tdata.feedback[id]) || {}, tst.local[id] || {});
+  async function tfetch() {
+    tmeta.textContent = 'memuat…';
+    try {
+      const r = await fetch('/api/ideas?t=' + Date.now(), { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      tdata = await r.json();
+      try { const qr = await fetch('/api/queue?t=' + Date.now(), { cache: 'no-store' }); tqueue = qr.ok ? await qr.json() : null; } catch (e) { tqueue = null; }
+      // feedback dari server lebih baru dari catatan lokal? pakai server
+      for (const id of Object.keys(tst.local)) { const s = tdata.feedback && tdata.feedback[id]; if (s && s.at && (!tst.local[id].at || s.at >= tst.local[id].at)) delete tst.local[id]; }
+      tsave(); tdraw();
+      const latest = (tdata.rows && tdata.rows[0] && tdata.rows[0].date) || '';
+      if (latest && tst.seen !== latest && !today.classList.contains('on')) $('todayBtn').classList.add('new');
+    } catch (e) { tmeta.textContent = 'gagal memuat: ' + e.message; }
+  }
+  function tdraw() {
+    tlist.textContent = '';
+    const raw = (tdata && tdata.rows) || [];
+    // urutan: antrian rekam dulu (sesuai /api/queue), lalu sisanya
+    const rows = raw.slice().sort((a, b) => { const pa = qpos(a.id) || 999, pb = qpos(b.id) || 999; return pa - pb; });
+    const nq = tqueue && tqueue.items ? tqueue.items.length : 0;
+    tmeta.textContent = raw.length ? ('update ' + fmtWib(tdata.generated_at) + (nq ? ' · ' + nq + ' antri rekam' : '')) : 'belum ada ide';
+    rows.forEach((r, i) => {
+      if (i >= 8) return;
+      const fb = fbOf(r.id), st = fb.status || 'baru', pos = qpos(r.id);
+      const c = document.createElement('div'); c.className = 'card st-' + st; c.dataset.id = r.id;
+      const top = document.createElement('div'); top.className = 'top';
+      top.innerHTML = '<span>' + (pos ? 'ANTRIAN #' + pos + ' · ' : '') + esc(r.date) + ' · ' + esc(r.durasi || '') + '</span><span class="st">' + (STL[st] || st) + (fb.takes ? ' ×' + fb.takes : '') + '</span>';
+      c.appendChild(top);
+      const h = document.createElement('h3'); h.textContent = r.title; c.appendChild(h);
+      const hk = document.createElement('div'); hk.className = 'hook'; hk.innerHTML = '<b>Hook:</b> ' + esc(r.hook) + '<br><b>Komen:</b> ' + esc(r.keyword); c.appendChild(hk);
+      const det = document.createElement('details');
+      det.innerHTML = '<summary>Angle, kenapa sekarang, visual, shoot</summary>' +
+        '<p><b>Angle.</b> ' + esc(r.angle) + '</p><p><b>Kenapa sekarang.</b> ' + esc(r.why_now) + '</p><p><b>Visual.</b> ' + esc(r.visual) + '</p><p><b>Shoot.</b> ' + esc(r.shoot) + '</p>' +
+        '<p><b>Sumber.</b><br>' + (Array.isArray(r.sources) ? r.sources : String(r.sources || '').split(/\n+/)).map(esc).join('<br>') + '</p>';
+      c.appendChild(det);
+      const acts = document.createElement('div'); acts.className = 'acts';
+      const bRec = mk('pill lime', '▶ Rekam', () => { tUse(r); });
+      const bCap = mk('pill', 'Salin caption', async () => { try { await navigator.clipboard.writeText(r.caption_ig || ''); flash(c, 'caption IG tersalin', 'ok'); } catch (e) { flash(c, 'gagal salin', 'bad'); } });
+      const bOk = mk('pill', '✓ Cocok', () => tSend(r.id, { status: 'cocok' }, c));
+      const bNo = mk('pill red', '✕ Riset ulang', () => { rs.classList.toggle('on'); });
+      acts.append(bRec, bCap, bOk, bNo); c.appendChild(acts);
+      const rs = document.createElement('div'); rs.className = 'reasons'; let sel = fb.reason || '';
+      REASONS.forEach(x => { const ch = document.createElement('span'); ch.className = 'chip' + (sel === x ? ' sel' : ''); ch.textContent = x; ch.addEventListener('click', () => { sel = x; rs.querySelectorAll('.chip').forEach(q => q.classList.toggle('sel', q.textContent === x)); }); rs.appendChild(ch); });
+      const inp = document.createElement('input'); inp.placeholder = 'catatan buat Claude (opsional): arah yang lo mau'; inp.value = fb.note || ''; rs.appendChild(inp);
+      const go = mk('pill red', 'Kirim: ganti ide ini', () => tSend(r.id, { status: 'tolak', reason: sel || 'gak cocok', note: inp.value.trim(), handled: false }, c));
+      rs.appendChild(go); c.appendChild(rs);
+      const fn = document.createElement('div'); fn.className = 'fbnote'; if (fb.status === 'tolak') fn.textContent = (fb.handled ? 'udah diganti Claude' : 'nunggu Claude riset ulang') + (fb.reason ? ' · ' + fb.reason : ''); c.appendChild(fn);
+      tlist.appendChild(c);
+    });
+  }
+  function mk(cls, label, fn) { const b = document.createElement('button'); b.className = cls; b.textContent = label; b.addEventListener('click', fn); return b; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
+  function fmtWib(iso) { if (!iso) return '-'; const d = new Date(iso); if (isNaN(d)) return iso; return d.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) + ' WIB'; }
+  function flash(card, msg, cls) { const n = card.querySelector('.fbnote'); if (!n) return; const old = n.textContent; n.textContent = msg; n.className = 'fbnote ' + (cls || ''); setTimeout(() => { n.className = 'fbnote'; n.textContent = old; }, 2500); }
+  function tUse(r) {
+    const name = (r.keyword || r.id).toLowerCase(); const txt = scriptOf(r);
+    let sc = store.scripts.find(z => z.ideaId === r.id || z.name === name);
+    if (sc) { sc.text = txt; sc.ideaId = r.id; } else { sc = { id: Date.now().toString(36), name, text: txt, ideaId: r.id }; store.scripts.unshift(sc); store.scripts = store.scripts.slice(0, 20); }
+    store.current = sc.id; save(); render(txt); tOpenedId = r.id; closeToday();
+    hudr.textContent = 'NASKAH: ' + name.toUpperCase().slice(0, 14);
+  }
+  async function tSend(id, patch, card) {
+    tst.local[id] = Object.assign({}, tst.local[id] || {}, patch, { at: new Date().toISOString() }); tsave(); tdraw();
+    const c2 = tlist.querySelector('[data-id="' + id + '"]') || card;
+    if (!tst.key) { flash(c2, 'isi kode sinkron di bawah biar kekirim ke Claude', 'bad'); return; }
+    try {
+      const r = await fetch('/api/feedback', { method: 'POST', headers: { 'content-type': 'application/json', 'x-token': tst.key }, body: JSON.stringify(Object.assign({ id }, patch)) });
+      if (r.status === 401) { flash(c2, 'kode sinkron salah', 'bad'); return; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json(); if (tdata) { tdata.feedback = tdata.feedback || {}; tdata.feedback[id] = j.feedback; } delete tst.local[id]; tsave(); tdraw();
+      flash(tlist.querySelector('[data-id="' + id + '"]'), patch.status === 'tolak' ? 'terkirim, Claude bakal ganti' : 'terkirim', 'ok');
+      if (patch.status === 'direkam' || patch.status === 'tolak') setTimeout(tfetch, 800);
+    } catch (e) { flash(c2, 'belum kekirim (' + e.message + '), kesimpen di HP', 'bad'); }
+  }
+  // habis rekam: tandai ide yang dipakai sebagai "direkam"
+  function tMarkRecorded() {
+    const cs = store.scripts.find(q => q.id === store.current); const id = (cs && cs.ideaId) || tOpenedId; if (!id) return;
+    const fb = fbOf(id); if (tdata && tdata.rows && !tdata.rows.some(r => r.id === id)) return;
+    tSend(id, { status: 'direkam', takes: (fb.takes || 0) + 1 });
+  }
+  function openToday() { today.classList.add('on'); $('todayBtn').classList.remove('new'); if (tdata && tdata.rows && tdata.rows[0]) { tst.seen = tdata.rows[0].date; tsave(); } $('tkey').value = tst.key || ''; if (!tdata) tfetch(); else tdraw(); }
+  function closeToday() { today.classList.remove('on'); }
+  $('todayBtn').addEventListener('click', openToday);
+  $('closeToday').addEventListener('click', closeToday);
+  $('tRefresh').addEventListener('click', tfetch);
+  $('tkeySave').addEventListener('click', () => { tst.key = $('tkey').value.trim(); tsave(); $('tkeySave').textContent = 'Tersimpan ✓'; setTimeout(() => { $('tkeySave').textContent = 'Simpan'; }, 1500); });
+
   // ---- naskah dari link (#n=judul&s=base64url) ----
   function b64d(v) { v = v.replace(/-/g, '+').replace(/_/g, '/'); while (v.length % 4) v += '='; const b = atob(v); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return new TextDecoder().decode(u); }
   function importFromHash() {
-    if (!location.hash || location.hash.indexOf('s=') < 0) return false;
+    if (!location.hash) return false;
+    // #today → buka daftar ide; #ide=<id> → langsung pakai naskah ide itu; #k=<kode sinkron> → simpan kode
+    if (/^#(today|next|ide=|k=)/.test(location.hash)) {
+      const q = new URLSearchParams(location.hash.slice(1));
+      if (q.get('k')) { tst.key = q.get('k'); tsave(); }
+      const isNext = /^#next/.test(location.hash);
+      let want = q.get('ide');
+      history.replaceState(null, '', location.pathname + location.search);
+      tfetch().then(() => {
+        if (isNext && tqueue && tqueue.items && tqueue.items[0]) want = tqueue.items[0].id;
+        const r = want && tdata && tdata.rows && tdata.rows.find(z => z.id === want); if (r) tUse(r); else openToday();
+      });
+      return true;
+    }
+    if (location.hash.indexOf('s=') < 0) return false;
     try {
       const q = new URLSearchParams(location.hash.slice(1));
       const txt = b64d(q.get('s') || ''); if (!txt.trim()) return false;
@@ -398,7 +544,7 @@
   // ---- init ----
   setSpeed(speed); setFs(fs);
   const cur = store.scripts.find(s => s.id === store.current);
-  if (!importFromHash()) render(cur ? cur.text : '');
+  if (!importFromHash()) { render(cur ? cur.text : ''); tfetch(); }
   startCam();
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !recording) startCam(); });
 })();
