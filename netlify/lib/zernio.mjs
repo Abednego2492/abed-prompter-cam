@@ -134,8 +134,9 @@ const toks = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[^\
 function sim(a, b) {
   const A = new Set(toks(a)), B = new Set(toks(b));
   if (!A.size || !B.size) return 0;
+  if (A.size < 3) return 0;
   let n = 0; for (const w of A) if (B.has(w)) n++;
-  return n / Math.min(A.size, B.size);
+  return n / A.size; // porsi kata judul ide yang muncul di post
 }
 const kwList = (k) => String(k || "").split(/[\/,|]+/).map((s) => s.trim()).filter((s) => s.length >= 2);
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -179,8 +180,9 @@ export function matchIdeas(rows, snap, links = {}) {
         if (kws.some((k) => new RegExp("(komen|comment|ketik|tulis|reply)\\s*[\"“'«]?\\s*" + esc(k) + "(?![\\p{L}\\p{N}])", "iu").test(txt))) { score = 80; how = "keyword"; }
       }
       if (!score) {
-        const s = Math.max(sim(r.title, p.title || p.content.split("\n")[0]), sim(r.hook, p.content.split("\n")[0]));
-        if (s >= 0.6) { score = Math.round(50 + s * 20); how = "judul"; }
+        const head = p.title + " " + p.content.split("\n").slice(0, 3).join(" ");
+        const s = Math.max(sim(r.title, head), sim(r.hook, head));
+        if (s >= 0.7) { score = Math.round(50 + s * 20); how = "judul"; }
       }
       if (score && (!best || score > best.score || (score === best.score && RANK[stageOf(p.status)] > RANK[stageOf(best.post.status)]))) best = { post: p, how, score };
     }
