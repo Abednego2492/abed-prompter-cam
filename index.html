@@ -442,13 +442,14 @@
     // urutan: antrian rekam dulu (sesuai /api/queue), lalu sisanya
     const rows = raw.slice().sort((a, b) => { const pa = qpos(a.id) || 999, pb = qpos(b.id) || 999; return pa - pb; });
     const nq = tqueue && tqueue.items ? tqueue.items.length : 0;
-    tmeta.textContent = raw.length ? ('update ' + fmtWib(tdata.generated_at) + (nq ? ' · ' + nq + ' antri rekam' : '')) : 'belum ada ide';
+    tmeta.textContent = raw.length ? ('update ' + fmtWib(tdata.generated_at) + (nq ? ' · ' + nq + ' antri rekam' : '') + (tqueue && tqueue.counts && tqueue.counts.tayang ? ' · ' + tqueue.counts.tayang + ' tayang' : '')) : 'belum ada ide';
     rows.forEach((r, i) => {
       if (i >= 8) return;
       const fb = fbOf(r.id), st = fb.status || 'baru', pos = qpos(r.id);
       const c = document.createElement('div'); c.className = 'card st-' + st; c.dataset.id = r.id;
       const top = document.createElement('div'); top.className = 'top';
-      top.innerHTML = '<span>' + (pos ? 'ANTRIAN #' + pos + ' · ' : '') + esc(r.date) + ' · ' + esc(r.durasi || '') + '</span><span class="st">' + (STL[st] || st) + (fb.takes ? ' ×' + fb.takes : '') + '</span>';
+      const dn = tqueue && tqueue.done && tqueue.done.find(z => z.id === r.id), zst = dn && { tayang: 'TAYANG', terjadwal: 'TERJADWAL', draf: 'DRAF ZERNIO' }[dn.stage];
+      top.innerHTML = '<span>' + (pos ? 'ANTRIAN #' + pos + ' · ' : '') + esc(r.date) + ' · ' + esc(r.durasi || '') + '</span><span class="st">' + (zst || STL[st] || st) + (fb.takes ? ' ×' + fb.takes : '') + '</span>';
       c.appendChild(top);
       const h = document.createElement('h3'); h.textContent = r.title; c.appendChild(h);
       const hk = document.createElement('div'); hk.className = 'hook'; hk.innerHTML = '<b>Hook:</b> ' + esc(r.hook) + '<br><b>Komen:</b> ' + esc(r.keyword); c.appendChild(hk);

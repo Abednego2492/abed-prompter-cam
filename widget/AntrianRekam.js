@@ -5,7 +5,9 @@
 // Widget iOS (Scriptable) yang nunjukin naskah yang belum lo shoot,
 // urut sesuai antrian. Tap widget = buka kamera dengan naskah #1.
 // Data: https://temu-prompter-cam.netlify.app/api/queue (publik, read-only,
-// gak butuh kode/key). Cocok dipasang di samping widget Content Monitor.
+// gak butuh kode/key). Status nyambung ke Zernio: naskah yang udah ada di
+// Zernio (draf/terjadwal/tayang) otomatis keluar dari antrian.
+// Pasang di samping widget Konten Tayang.
 // Ukuran: kecil = #1 aja, sedang = 3 teratas, besar = 6 teratas.
 // =====================================================================
 
@@ -52,7 +54,9 @@ function header(w, data, stale) {
   t.textColor = LIME;
   h.addSpacer();
   const n = data ? data.items.length : 0;
-  const c = h.addText(stale ? "offline" : (n ? n + " antri" : "kosong"));
+  const cn = (data && data.counts) || {};
+  const extra = cn.terjadwal || cn.tayang ? " · " + (cn.terjadwal || 0) + " jdwl · " + (cn.tayang || 0) + " tayang" : "";
+  const c = h.addText(stale ? "offline" : (n ? n + " antri" : "kosong") + extra);
   c.font = Font.mediumMonospacedSystemFont(10);
   c.textColor = stale ? RED : MUT;
 }
@@ -106,13 +110,25 @@ function row(w, it, big) {
   }
 }
 
+const STAGE = { tayang: ["TAYANG", INK, LIME], terjadwal: ["TERJADWAL", INK, new Color("#FFD166")], draf: ["DRAF", WHITE, new Color("#2A3142")], direkam: ["DIREKAM", WHITE, new Color("#2A3142")] };
+function doneRow(w, d) {
+  const s = w.addStack(); s.centerAlignContent();
+  const st = STAGE[d.stage] || [String(d.stage || "").toUpperCase(), WHITE, new Color("#2A3142")];
+  chip(s, st[0], st[1], st[2]); s.addSpacer(6);
+  const t = s.addText(cut(d.title, 44)); t.font = Font.systemFont(10); t.textColor = MUT; t.lineLimit = 1;
+  const zz = d.zernio || {};
+  if (zz.post_url) s.url = zz.post_url;
+  if (d.stage === "tayang" && zz.metrics && zz.metrics.views != null) { s.addSpacer(); const v = s.addText("▶ " + zz.metrics.views); v.font = Font.mediumMonospacedSystemFont(9); v.textColor = WHITE; }
+  else if (d.stage === "terjadwal" && zz.scheduled_for) { s.addSpacer(); const v = s.addText(hhmm(zz.scheduled_for)); v.font = Font.mediumMonospacedSystemFont(9); v.textColor = WHITE; }
+}
+
 async function build() {
   const fam = config.widgetFamily || "large";
   const { data, stale } = await load();
   const w = new ListWidget();
   w.backgroundColor = INK;
   w.setPadding(12, 12, 12, 12);
-  w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
+  w.refreshAfterDate = new Date(Date.now() + 15 * 60 * 1000);
   w.url = BASE + "/#next";
 
   header(w, data, stale);
@@ -126,11 +142,7 @@ async function build() {
   if (!data.items.length) {
     const t = w.addText("Semua naskah udah direkam. Ide baru masuk jam 06.15.");
     t.font = Font.semiboldSystemFont(13); t.textColor = WHITE;
-    if (data.done && data.done[0]) {
-      w.addSpacer(6);
-      const d = w.addText("terakhir: " + cut(data.done[0].title, 48));
-      d.font = Font.systemFont(11); d.textColor = MUT;
-    }
+    (data.done || []).slice(0, fam === "small" ? 1 : fam === "medium" ? 2 : 6).forEach((d) => { w.addSpacer(5); doneRow(w, d); });
     return w;
   }
 
@@ -148,17 +160,22 @@ async function build() {
     return w;
   }
 
-  const max = fam === "medium" ? 2 : 5;
+  const max = fam === "medium" ? 2 : 4;
   data.items.slice(0, max).forEach((it, i) => {
     if (i) w.addSpacer(6);
     row(w, it, fam !== "medium");
   });
+  if (fam !== "medium" && data.done && data.done.length) {
+    w.addSpacer(8);
+    data.done.slice(0, 2).forEach((d, i) => { if (i) w.addSpacer(3); doneRow(w, d); });
+  }
   w.addSpacer();
   const foot = w.addStack();
   const left = foot.addText(data.items.length > max ? "+" + (data.items.length - max) + " lagi" : "tap kartu = buka di kamera");
   left.font = Font.mediumMonospacedSystemFont(9); left.textColor = MUT;
   foot.addSpacer();
-  const right = foot.addText((stale ? "cache " : "update ") + hhmm(data._fetched || Date.now()));
+  const zok = !data.zernio || data.zernio.ok;
+  const right = foot.addText((stale ? "cache " : zok ? "update " : "zernio ✕ ") + hhmm(data._fetched || Date.now()));
   right.font = Font.mediumMonospacedSystemFont(9); right.textColor = MUT;
   return w;
 }

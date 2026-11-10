@@ -5,6 +5,7 @@
 // POST /api/feedback         -> {id, status, reason?, note?, handled?} (header x-token)
 // Token gak disimpan di mana pun: cuma SHA-256-nya di bawah ini.
 import { getStore } from "@netlify/blobs";
+import { snapshot, matchIdeas, summarizeMatch, stageOf } from "../lib/zernio.mjs";
 
 const TOKEN_SHA256 = "14f189d73d67caf2a4e1eaa5e8d0278d2f6864203e057505882285fd6bd7e0c4";
 const STATUSES = new Set(["baru", "cocok", "direkam", "tolak"]);
@@ -60,20 +61,33 @@ export default async (req) => {
       const ideas = (await store.get("ideas.json", { type: "json" })) || { rows: [] };
       const fb = (await store.get("feedback.json", { type: "json" })) || {};
       const q = (await store.get("queue.json", { type: "json" })) || { order: [], notes: {} };
+      const links = (await store.get("links.json", { type: "json" })) || {};
       const rows = Array.isArray(ideas.rows) ? ideas.rows : [];
+      const snap = await snapshot(store, { fresh: url.searchParams.get("fresh") === "1" });
+      const matched = snap.ok ? matchIdeas(rows, snap, links) : {};
       const byId = new Map(rows.map((r) => [r.id, r]));
       const listed = (q.order || []).filter((id) => byId.has(id));
       const rest = rows.filter((r) => !listed.includes(r.id)).sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(a.id).localeCompare(String(b.id))).map((r) => r.id);
       const items = [], done = [];
       for (const id of [...listed, ...rest]) {
         const r = byId.get(id), st = (fb[id] && fb[id].status) || "baru";
+        const z = summarizeMatch(matched[id], snap);
         const base = { id, title: r.title || id, hook: r.hook || "", keyword: r.keyword || "", durasi: r.durasi || "", date: r.date || "" };
-        if (st === "direkam") { done.push({ ...base, takes: fb[id].takes || 1, at: fb[id].at }); continue; }
+        // udah ada di Zernio (draf/terjadwal/tayang) = pasti udah direkam -> keluar dari antrian
+        if (z && z.stage && z.stage !== "gagal") { done.push({ ...base, stage: z.stage, takes: (fb[id] && fb[id].takes) || 0, at: z.published_at || z.scheduled_for || (fb[id] && fb[id].at) || "", zernio: z }); continue; }
+        if (st === "direkam") { done.push({ ...base, stage: "direkam", takes: fb[id].takes || 1, at: fb[id].at, zernio: z }); continue; }
         if (st === "tolak") continue;
         const txt = (r.script || []).map((b) => b && b.l ? b.l : "").join(" ");
-        items.push({ ...base, pos: items.length + 1, needs_fill: /\[[A-Z0-9 ,.'-]{4,}\]/.test(txt), note: (q.notes && q.notes[id]) || "", link: "https://temu-prompter-cam.netlify.app/#ide=" + encodeURIComponent(id) });
+        items.push({ ...base, pos: items.length + 1, needs_fill: /\[[A-Z0-9 ,.'-]{4,}\]/.test(txt), note: (q.notes && q.notes[id]) || "", link: "https://temu-prompter-cam.netlify.app/#ide=" + encodeURIComponent(id), zernio: z });
       }
-      return json({ updated_at: q.updated_at || ideas.generated_at || null, items, done: done.slice(0, 10) });
+      const RK = { tayang: 0, terjadwal: 1, draf: 2, direkam: 3 };
+      done.sort((a, b) => (RK[a.stage] ?? 9) - (RK[b.stage] ?? 9) || String(b.at || "").localeCompare(String(a.at || "")));
+      return json({
+        updated_at: q.updated_at || ideas.generated_at || null,
+        zernio: { ok: !!snap.ok, at: snap.at || null, cached: !!snap.cached, error: snap.error || null },
+        counts: { antri: items.length, direkam: done.filter((d) => d.stage === "direkam").length, terjadwal: done.filter((d) => d.stage === "terjadwal").length, tayang: done.filter((d) => d.stage === "tayang").length },
+        items, done: done.slice(0, 20),
+      });
     }
     if (req.method === "POST") {
       if (!(await authed(req))) return json({ error: "token salah" }, 401);
@@ -87,6 +101,83 @@ export default async (req) => {
       return json({ ok: true, ...q });
     }
     return json({ error: "method" }, 405);
+  }
+
+  // ---- konten tayang (dari Zernio) ----
+  // GET /api/posted[?days=7&limit=20&fresh=1] -> {zernio, totals, posts:[...], next:[...]}  (publik; cuma post yang udah tayang + judul jadwal berikutnya)
+  if (route === "posted") {
+    if (req.method !== "GET") return json({ error: "method" }, 405);
+    const snap = await snapshot(store, { fresh: url.searchParams.get("fresh") === "1" });
+    const days = Math.max(1, Math.min(45, Number(url.searchParams.get("days")) || 7));
+    const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit")) || 20));
+    const ideas = (await store.get("ideas.json", { type: "json" })) || { rows: [] };
+    const links = (await store.get("links.json", { type: "json" })) || {};
+    const rows = Array.isArray(ideas.rows) ? ideas.rows : [];
+    const matched = snap.ok ? matchIdeas(rows, snap, links) : {};
+    const ideaByZid = new Map(Object.entries(matched).map(([id, m]) => [m.post.zid, byIdea(rows, id)]));
+    const zTitle = new Map((snap.posts || []).map((p) => [p.zid, p.title || p.content.split("\n")[0]]));
+    const since = Date.now() - days * 864e5;
+    const all = (snap.analytics || []).filter((a) => a.published_at).sort((a, b) => b.published_at.localeCompare(a.published_at));
+    const inWin = all.filter((a) => Date.parse(a.published_at) >= since);
+    const sum = (arr, k) => arr.reduce((t, r) => t + (Number(r[k]) || 0), 0);
+    const posts = all.slice(0, limit).map((a) => {
+      const idea = a.zid ? ideaByZid.get(a.zid) : null;
+      return {
+        platform: a.platform, account: a.account, url: a.url, published_at: a.published_at, media: a.media, thumb: a.thumb,
+        title: (idea && idea.title) || zTitle.get(a.zid) || a.content.split("\n")[0].slice(0, 120),
+        keyword: idea ? idea.keyword : "", idea_id: idea ? idea.id : "",
+        views: a.views, reach: a.reach, likes: a.likes, comments: a.comments, shares: a.shares, saves: a.saves, sync: a.sync,
+      };
+    });
+    // post yang statusnya published di Zernio tapi analytics belum masuk (baru tayang)
+    const haveZ = new Set(all.map((a) => a.zid).filter(Boolean));
+    const fresh = (snap.posts || []).filter((p) => stageOf(p.status) === "tayang" && !haveZ.has(p.zid)).flatMap((p) => p.platforms.filter((x) => x.status === "published" || x.published_at).map((x) => {
+      const idea = ideaByZid.get(p.zid);
+      return { platform: x.platform, account: "", url: x.url, published_at: x.published_at || p.scheduled_for, media: "", thumb: "", title: (idea && idea.title) || p.title || p.content.split("\n")[0].slice(0, 120), keyword: idea ? idea.keyword : "", idea_id: idea ? idea.id : "", views: null, reach: null, likes: null, comments: null, shares: null, saves: null, sync: "pending" };
+    }));
+    const merged = [...fresh, ...posts].sort((a, b) => String(b.published_at).localeCompare(String(a.published_at))).slice(0, limit);
+    const next = (snap.posts || []).filter((p) => stageOf(p.status) === "terjadwal").sort((a, b) => String(a.scheduled_for).localeCompare(String(b.scheduled_for))).slice(0, 5).map((p) => {
+      const idea = ideaByZid.get(p.zid);
+      return { title: (idea && idea.title) || p.title || p.content.split("\n")[0].slice(0, 120), keyword: idea ? idea.keyword : "", idea_id: idea ? idea.id : "", scheduled_for: p.scheduled_for, platforms: p.platforms.map((x) => x.platform) };
+    });
+    const failed = (snap.posts || []).filter((p) => p.status === "failed" && Date.parse(p.updated_at || p.scheduled_for || 0) >= Date.now() - 3 * 864e5).length;
+    return json({
+      zernio: { ok: !!snap.ok, at: snap.at || null, cached: !!snap.cached, error: snap.error || null },
+      totals: { days, posts: inWin.length + fresh.filter((f) => Date.parse(f.published_at) >= since).length, views: sum(inWin, "views"), likes: sum(inWin, "likes"), comments: sum(inWin, "comments"), shares: sum(inWin, "shares"), saves: sum(inWin, "saves"), scheduled: (snap.posts || []).filter((p) => stageOf(p.status) === "terjadwal").length, failed_3d: failed },
+      posts: merged, next,
+    });
+  }
+
+  // POST /api/link {id, postId|null|"none"} (x-token): paksa/lepas pasangan ide <-> post Zernio
+  if (route === "link") {
+    if (!(await authed(req))) return json({ error: "token salah" }, 401);
+    const links = (await store.get("links.json", { type: "json" })) || {};
+    if (req.method === "GET") return json(links);
+    if (req.method !== "POST") return json({ error: "method" }, 405);
+    let b; try { b = await req.json(); } catch { return json({ error: "body bukan JSON" }, 400); }
+    if (!b || typeof b.id !== "string" || !/^[\w.-]{1,64}$/.test(b.id)) return json({ error: "id" }, 400);
+    if (b.postId === null || b.postId === undefined || b.postId === "") delete links[b.id];
+    else if (typeof b.postId === "string" && b.postId.length <= 64) links[b.id] = b.postId;
+    else return json({ error: "postId" }, 400);
+    await store.setJSON("links.json", links);
+    return json({ ok: true, links });
+  }
+
+  // POST /api/zernio-key {key} (x-token): simpan key Zernio di Blobs (kalau gak pakai env var). GET = cek status, key gak ditampilkan.
+  if (route === "zernio-key") {
+    if (!(await authed(req))) return json({ error: "token salah" }, 401);
+    if (req.method === "GET") {
+      const s = (await store.get("secrets.json", { type: "json" })) || {};
+      return json({ env: !!process.env.ZERNIO_API_KEY, blob: !!s.zernio_key, set_at: s.set_at || null });
+    }
+    if (req.method !== "POST") return json({ error: "method" }, 405);
+    let b; try { b = await req.json(); } catch { return json({ error: "body bukan JSON" }, 400); }
+    const k = b && typeof b.key === "string" ? b.key.trim() : "";
+    if (k && (k.length < 10 || k.length > 300)) return json({ error: "key gak valid" }, 400);
+    await store.setJSON("secrets.json", k ? { zernio_key: k, set_at: new Date().toISOString() } : {});
+    await store.delete("zernio-cache.json");
+    const snap = k ? await snapshot(store, { fresh: true }) : { ok: false };
+    return json({ ok: true, saved: !!k, test: { ok: !!snap.ok, posts: (snap.posts || []).length, analytics: (snap.analytics || []).length, error: snap.error || null } });
   }
 
   if (route === "feedback") {
@@ -124,4 +215,6 @@ export default async (req) => {
   return json({ error: "not found" }, 404);
 };
 
-export const config = { path: ["/api/ideas", "/api/feedback", "/api/queue"] };
+function byIdea(rows, id) { return rows.find((r) => r.id === id) || null; }
+
+export const config = { path: ["/api/ideas", "/api/feedback", "/api/queue", "/api/posted", "/api/link", "/api/zernio-key"] };
